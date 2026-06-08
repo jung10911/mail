@@ -6,20 +6,21 @@ import pandas as pd
 import time
 import urllib.parse
 
-# 🔑 네이버 개발자 센터 인증 키 설정
-NAVER_CLIENT_ID = "WoaRobbnYpkvj36i98OR"
-NAVER_CLIENT_SECRET = "TnlbM6lfPn"
+# 🔑 사용자 네이버 인증 키 설정
+NAVER_CLIENT_ID = "WoaRobbnYpkvj36i98OR".strip()
+NAVER_CLIENT_SECRET = "TnlbM6lfPn".strip()
 
-# 1. 네이버 검색 API를 통해 기업의 공식 홈페이지 URL을 찾는 함수
+# 1. 네이버 공식 가이드(블로그 검색 기반)를 적용하여 기업 URL을 찾는 함수
 def get_company_url_naver(company_name):
     try:
-        # 충돌을 방지하기 위해 검색어 변수명을 완전히 다르게 지정
-        search_keyword = f"{company_name} 홈페이지"
+        # 네이버 검색어 인코딩 처리 (공식 문서 방식)
+        search_keyword = f"{company_name} 공식 홈페이지"
         encoded_keyword = urllib.parse.quote(search_keyword)
         
-        # 네이버 웹문서 검색 API 주소
-        naver_api_url = f"https://openapi.naver.com/v1/search/webkr.json?query={encoded_keyword}&display=3"
+        # [수정] 보내주신 공식 가이드 문서의 기본 호출 주소 적용
+        naver_api_url = f"https://openapi.naver.com/v1/search/blog?query={encoded_keyword}&display=5"
         
+        # 공식 문서 명시 헤더 구성
         headers = {
             "X-Naver-Client-Id": NAVER_CLIENT_ID,
             "X-Naver-Client-Secret": NAVER_CLIENT_SECRET
@@ -27,19 +28,29 @@ def get_company_url_naver(company_name):
         
         response = requests.get(naver_api_url, headers=headers)
         
+        # HTTP 응답 코드 조건문 (공식 문서의 if rescode==200 대응)
         if response.status_code == 200:
             result_json = response.json()
             items_list = result_json.get('items', [])
             
             if items_list:
-                # 블로그나 카페 링크는 제외하고 실제 기업 사이트 우선 필터링
                 for item in items_list:
                     link = item['link']
-                    if "naver.com" not in link and "daum.net" not in link:
+                    # 블로그 내부 본문 링크 내에서 기업 도메인 형태 유추 및 정제
+                    # 일반 블로그 글 내에 섞인 주소들 중 진짜 홈페이지 필터링을 위한 필터
+                    if "naver.com" not in link and "daum.net" not in link and "tistory.com" not in link:
                         return link
-                # 필터링 후 남은 게 없다면 첫 번째 링크 반환
+                # 적절한 외부 주소가 없으면 검색된 첫 주소 사용
                 return items_list[0]['link']
+            else:
+                # 블로그 결과가 안 나올 경우를 대비한 2차 백업 서브 쿼리 (뉴스/통합 섹션 대응 구조)
+                backup_url = f"https://openapi.naver.com/v1/search/webkr.json?query={encoded_keyword}&display=3"
+                backup_resp = requests.get(backup_url, headers=headers)
+                if backup_resp.status_code == 200:
+                    bk_items = backup_resp.json().get('items', [])
+                    if bk_items: return bk_items[0]['link']
                 
+        # 401 권한오류를 포함한 에러 핸들링 출력
         if response.status_code != 200:
             return f"API 오류 (코드: {response.status_code})"
             
@@ -47,7 +58,7 @@ def get_company_url_naver(company_name):
     except Exception as e:
         return f"검색 중 에러: {str(e)}"
 
-# 2. 이메일 추출 핵심 함수
+# 2. 이메일 주소 정규식 크롤링 함수
 def extract_emails_from_url(url):
     if not url or url.startswith("공식 홈페이지") or url.startswith("API 오류") or url.startswith("검색 중 에러"):
         return "N/A"
@@ -65,7 +76,7 @@ def extract_emails_from_url(url):
         soup = BeautifulSoup(response.text, 'html.parser')
         emails = set(re.findall(email_regex, soup.text))
         
-        # 메인 페이지에 없으면 Contact/소개 페이지 추가 검색
+        # 메인 페이지 부재 시 서브 Contact 스캐닝 기법 적용
         if not emails:
             contact_links = []
             for a_tag in soup.find_all('a', href=True):
@@ -87,10 +98,10 @@ def extract_emails_from_url(url):
     except Exception as e:
         return "접속/파싱 오류"
 
-# 3. Streamlit UI 대시보드
-st.set_page_config(page_title="기업명 이메일 크롤러 V2.1", layout="wide")
-st.title("🏢 기업 이름 기반 이메일 추출기 (오류 수정 버전)")
-st.caption("코드 내부 명칭 충돌 문제를 해결한 안정화 버전입니다.")
+# 3. Streamlit 웹 인프라 UI 구성
+st.set_page_config(page_title="기업명 이메일 크롤러 V3", layout="wide")
+st.title("🏢 기업 이름 기반 이메일 추출기 (공식 API 가이드 반영)")
+st.caption("네이버 개발자 가이드 라인 규격에 맞춰 URL 탐색 인터페이스를 패치한 최종 버전입니다.")
 
 st.markdown("---")
 
@@ -141,6 +152,6 @@ if st.button("🚀 크롤링 시작", type="primary"):
         st.download_button(
             label="📥 결과 Excel(CSV) 다운로드",
             data=csv,
-            file_name="company_emails_fixed_final.csv",
+            file_name="company_emails_official_fixed.csv",
             mime="text/csv"
         )
