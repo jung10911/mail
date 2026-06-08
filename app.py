@@ -4,25 +4,41 @@ from bs4 import BeautifulSoup
 import re
 import pandas as pd
 import time
-# 구글 검색을 위한 라이브러리 추가
-from googlesearch import search
+import urllib.parse
 
-# 1. 기업명으로 공식 홈페이지 URL을 찾는 함수
-def get_company_url(company_name):
+# 🔑 보내주신 네이버 개발자 센터 인증 키 자동 주입 완료
+NAVER_CLIENT_ID = "WoaRobbnYpkvj36i98OR"
+NAVER_CLIENT_SECRET = "TnlbM6lfPn"
+
+# 1. 네이버 검색 API를 통해 기업의 공식 홈페이지 URL을 찾는 함수
+def get_company_url_naver(company_name):
     try:
-        # 구글에 "기업명"으로 검색하여 가장 상단의 결과 1개를 가져옴
-        query = f"{company_name}"
-        for url in search(query, num_results=1, lang="ko"):
-            return url
+        # 네이버 웹문서 검색 활용 (기업명 공식 홈페이지 조건 검색)
+        encText = urllib.parse.quote(f"{company_name} 공식 홈페이지")
+        url = f"https://openapi.naver.com/v1/search/webkr.json?query={encText}&display=1"
+        
+        headers = {
+            "X-Naver-Client-Id": NAVER_CLIENT_ID,
+            "X-Naver-Client-Secret": NAVER_CLIENT_SECRET
+        }
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('items'):
+                # 검색 결과 중 가장 첫 번째 링크 반환
+                return result['items'][0]['link']
+        return None
     except Exception as e:
         return None
-    return None
 
-# 2. 이메일 추출 핵심 함수 (이전과 동일)
+# 2. 이메일 추출 핵심 함수
 def extract_emails_from_url(url):
     if not url:
         return "홈페이지 주소를 찾을 수 없음"
         
+    # 이메일 추출 전용 정규표현식
     email_regex = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -36,6 +52,7 @@ def extract_emails_from_url(url):
         soup = BeautifulSoup(response.text, 'html.parser')
         emails = set(re.findall(email_regex, soup.text))
         
+        # 메인 페이지에 메일이 없을 경우 하부 Contact 페이지 탐색 
         if not emails:
             contact_links = []
             for a_tag in soup.find_all('a', href=True):
@@ -55,16 +72,16 @@ def extract_emails_from_url(url):
         return ", ".join(list(emails)) if emails else "이메일을 찾을 수 없음"
             
     except Exception as e:
-        return f"오류 발생"
+        return "오류 발생"
 
 # 3. Streamlit UI 대시보드
 st.set_page_config(page_title="기업명 이메일 크롤러", layout="wide")
 st.title("🏢 기업 이름 기반 이메일 추출기")
-st.caption("기업 이름만 입력하면 구글 검색을 통해 홈페이지를 찾고 이메일을 수집합니다.")
+st.caption("네이버 검색 API 연동 완료 - 차단 우회 및 공식 홈페이지 이메일 매칭 대시보드")
 
 st.markdown("---")
 
-# 텍스트 입력 창 (기업 이름 입력)
+# 기업명 리스트 대량 입력창
 company_input = st.text_area(
     "기업 이름을 입력하세요 (한 줄에 하나씩)",
     height=200,
@@ -82,14 +99,13 @@ if st.button("🚀 크롤링 시작", type="primary"):
         status_text = st.empty()
         
         for idx, company in enumerate(companies):
-            status_text.text(f"⏳ 진행 중 ({idx+1}/{len(companies)}): {company} 검색 중...")
+            status_text.text(f"⏳ 진행 중 ({idx+1}/{len(companies)}): {company} 홈페이지 찾는 중...")
             
-            # 1단계: 구글 검색으로 홈페이지 URL 찾기
-            url = get_company_url(company)
+            # 네이버 API 기반 홈페이지 URL 탐색
+            url = get_company_url_naver(company)
             
             if url:
-                status_text.text(f"⏳ 진행 중 ({idx+1}/{len(companies)}): {company} 이메일 추출 중...")
-                # 2단계: 해당 URL에서 이메일 추출
+                status_text.text(f"⏳ 진행 중 ({idx+1}/{len(companies)}): {company} 이메일 스캐닝 중...")
                 email_result = extract_emails_from_url(url)
             else:
                 url = "공식 홈페이지 찾기 실패"
@@ -102,19 +118,19 @@ if st.button("🚀 크롤링 시작", type="primary"):
             })
             
             progress_bar.progress((idx + 1) / len(companies))
-            
-            # 구글 차단 방지 및 서버 부하 감소를 위해 조금 더 긴 딜레이 설정 (2초)
-            time.sleep(2.0)
+            time.sleep(0.5)  # API 기반 안정적인 조회를 위한 최소 딜레이 설정
             
         status_text.text("✅ 크롤링 완료!")
         
+        # 대시보드 표 출력
         df = pd.DataFrame(results)
         st.dataframe(df, use_container_width=True)
         
+        # 다운로드 버튼 구현
         csv = df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         st.download_button(
             label="📥 결과 Excel(CSV) 다운로드",
             data=csv,
-            file_name="company_emails_by_name.csv",
+            file_name="company_emails_final.csv",
             mime="text/csv"
         )
