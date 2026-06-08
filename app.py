@@ -59,7 +59,7 @@ def extract_emails_from_url(url):
 
 # 2. Streamlit UI 대시보드 구성
 st.set_page_config(page_title="기업 이메일 크롤러", layout="wide")
-st.title("🏢 기업 홈페이지 이메일 추출기")
+st.title("🏢 기업 이메일 추출")
 st.caption("기업 리스트(URL)를 입력하면 홈페이지 내 이메일 주소를 자동으로 수집합니다. (엑셀 복사/붙여넣기 가능)")
 
 st.markdown("---")
