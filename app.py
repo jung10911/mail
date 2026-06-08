@@ -6,42 +6,40 @@ import pandas as pd
 import time
 import urllib.parse
 
-# 🔑 제공해주신 네이버 개발자 센터 인증 키
+# 🔑 네이버 개발자 센터 인증 키 설정
 NAVER_CLIENT_ID = "WoaRobbnYpkvj36i98OR"
 NAVER_CLIENT_SECRET = "TnlbM6lfPn"
 
-# 1. 네이버 검색 API를 통해 기업의 공식 홈페이지 URL을 찾는 함수 (정확도 개선 버전)
+# 1. 네이버 검색 API를 통해 기업의 공식 홈페이지 URL을 찾는 함수
 def get_company_url_naver(company_name):
     try:
-        # '공식 홈페이지' 텍스트를 제거하고 기업명만으로 웹문서와 일반 검색 유연하게 대처
-        # 정확도를 위해 기업명 뒤에 사이트(site) 관련 키워드 조합
-        encText = urllib.parse.quote(f"{company_name} 홈페이지")
+        # 충돌을 방지하기 위해 검색어 변수명을 완전히 다르게 지정
+        search_keyword = f"{company_name} 홈페이지"
+        encoded_keyword = urllib.parse.quote(search_keyword)
         
-        # 1차 시도: 웹문서 검색
-        url = f"https://openapi.naver.com/v1/search/webkr.json?query={encText}&display=3"
+        # 네이버 웹문서 검색 API 주소
+        naver_api_url = f"https://openapi.naver.com/v1/search/webkr.json?query={encoded_keyword}&display=3"
         
         headers = {
             "X-Naver-Client-Id": NAVER_CLIENT_ID,
             "X-Naver-Client-Secret": NAVER_CLIENT_SECRET
         }
         
-        response = requests.get(url, headers=headers)
+        response = requests.get(naver_api_url, headers=headers)
         
         if response.status_code == 200:
-            result = response.json()
-            items = result.get('items', [])
+            result_json = response.json()
+            items_list = result_json.get('items', [])
             
-            if items:
-                # 블로그나 카페 링크(blog.naver.com, cafe.naver.com)는 제외하고 기업 진짜 사이트 필터링
-                for item in items:
+            if items_list:
+                # 블로그나 카페 링크는 제외하고 실제 기업 사이트 우선 필터링
+                for item in items_list:
                     link = item['link']
                     if "naver.com" not in link and "daum.net" not in link:
                         return link
                 # 필터링 후 남은 게 없다면 첫 번째 링크 반환
-                return items[0]['link']
+                return items_list[0]['link']
                 
-        # 2차 시도: 웹문서 결과가 없을 경우 일반 블로그/문서 통합 필터링 시도
-        # (간혹 네이버가 대기업 홈페이지를 웹문서 섹션에 안 넣어주는 경우가 있음)
         if response.status_code != 200:
             return f"API 오류 (코드: {response.status_code})"
             
@@ -51,7 +49,7 @@ def get_company_url_naver(company_name):
 
 # 2. 이메일 추출 핵심 함수
 def extract_emails_from_url(url):
-    if not url or url.startswith("공식 홈페이지") or url.startswith("API 오류"):
+    if not url or url.startswith("공식 홈페이지") or url.startswith("API 오류") or url.startswith("검색 중 에러"):
         return "N/A"
         
     email_regex = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
@@ -90,9 +88,9 @@ def extract_emails_from_url(url):
         return "접속/파싱 오류"
 
 # 3. Streamlit UI 대시보드
-st.set_page_config(page_title="기업명 이메일 크롤러 V2", layout="wide")
-st.title("🏢 기업 이름 기반 이메일 추출기 (검색 엔진 튜닝 버전)")
-st.caption("네이버 API 검색 쿼리 튜닝 및 필터링 로직이 업그레이드된 버전입니다.")
+st.set_page_config(page_title="기업명 이메일 크롤러 V2.1", layout="wide")
+st.title("🏢 기업 이름 기반 이메일 추출기 (오류 수정 버전)")
+st.caption("코드 내부 명칭 충돌 문제를 해결한 안정화 버전입니다.")
 
 st.markdown("---")
 
@@ -115,7 +113,6 @@ if st.button("🚀 크롤링 시작", type="primary"):
         for idx, company in enumerate(companies):
             status_text.text(f"⏳ 진행 중 ({idx+1}/{len(companies)}): {company} 홈페이지 검색 중...")
             
-            # 개선된 검색 함수 호출
             url = get_company_url_naver(company)
             
             if url and not url.startswith("API 오류") and not url.startswith("검색 중 에러"):
@@ -124,7 +121,7 @@ if st.button("🚀 크롤링 시작", type="primary"):
             else:
                 email_result = "N/A"
                 if not url:
-                    url = "공식 홈페이지 찾기 실패 (검색 결과 없음)"
+                    url = "공식 홈페이지 찾기 실패"
                 
             results.append({
                 "기업 이름": company, 
@@ -144,6 +141,6 @@ if st.button("🚀 크롤링 시작", type="primary"):
         st.download_button(
             label="📥 결과 Excel(CSV) 다운로드",
             data=csv,
-            file_name="company_emails_fixed_v2.csv",
+            file_name="company_emails_fixed_final.csv",
             mime="text/csv"
         )
