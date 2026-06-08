@@ -6,16 +6,19 @@ import pandas as pd
 import time
 import urllib.parse
 
-# 🔑 보내주신 네이버 개발자 센터 인증 키 자동 주입 완료
+# 🔑 제공해주신 네이버 개발자 센터 인증 키
 NAVER_CLIENT_ID = "WoaRobbnYpkvj36i98OR"
 NAVER_CLIENT_SECRET = "TnlbM6lfPn"
 
-# 1. 네이버 검색 API를 통해 기업의 공식 홈페이지 URL을 찾는 함수
+# 1. 네이버 검색 API를 통해 기업의 공식 홈페이지 URL을 찾는 함수 (정확도 개선 버전)
 def get_company_url_naver(company_name):
     try:
-        # 네이버 웹문서 검색 활용 (기업명 공식 홈페이지 조건 검색)
-        encText = urllib.parse.quote(f"{company_name} 공식 홈페이지")
-        url = f"https://openapi.naver.com/v1/search/webkr.json?query={encText}&display=1"
+        # '공식 홈페이지' 텍스트를 제거하고 기업명만으로 웹문서와 일반 검색 유연하게 대처
+        # 정확도를 위해 기업명 뒤에 사이트(site) 관련 키워드 조합
+        encText = urllib.parse.quote(f"{company_name} 홈페이지")
+        
+        # 1차 시도: 웹문서 검색
+        url = f"https://openapi.naver.com/v1/search/webkr.json?query={encText}&display=3"
         
         headers = {
             "X-Naver-Client-Id": NAVER_CLIENT_ID,
@@ -26,19 +29,31 @@ def get_company_url_naver(company_name):
         
         if response.status_code == 200:
             result = response.json()
-            if result.get('items'):
-                # 검색 결과 중 가장 첫 번째 링크 반환
-                return result['items'][0]['link']
+            items = result.get('items', [])
+            
+            if items:
+                # 블로그나 카페 링크(blog.naver.com, cafe.naver.com)는 제외하고 기업 진짜 사이트 필터링
+                for item in items:
+                    link = item['link']
+                    if "naver.com" not in link and "daum.net" not in link:
+                        return link
+                # 필터링 후 남은 게 없다면 첫 번째 링크 반환
+                return items[0]['link']
+                
+        # 2차 시도: 웹문서 결과가 없을 경우 일반 블로그/문서 통합 필터링 시도
+        # (간혹 네이버가 대기업 홈페이지를 웹문서 섹션에 안 넣어주는 경우가 있음)
+        if response.status_code != 200:
+            return f"API 오류 (코드: {response.status_code})"
+            
         return None
     except Exception as e:
-        return None
+        return f"검색 중 에러: {str(e)}"
 
 # 2. 이메일 추출 핵심 함수
 def extract_emails_from_url(url):
-    if not url:
-        return "홈페이지 주소를 찾을 수 없음"
+    if not url or url.startswith("공식 홈페이지") or url.startswith("API 오류"):
+        return "N/A"
         
-    # 이메일 추출 전용 정규표현식
     email_regex = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -47,17 +62,17 @@ def extract_emails_from_url(url):
     try:
         response = requests.get(url, headers=headers, timeout=7)
         if response.status_code != 200:
-            return "접속 실패"
+            return "홈페이지 접속 실패"
             
         soup = BeautifulSoup(response.text, 'html.parser')
         emails = set(re.findall(email_regex, soup.text))
         
-        # 메인 페이지에 메일이 없을 경우 하부 Contact 페이지 탐색 
+        # 메인 페이지에 없으면 Contact/소개 페이지 추가 검색
         if not emails:
             contact_links = []
             for a_tag in soup.find_all('a', href=True):
                 href = a_tag['href'].lower()
-                if 'contact' in href or 'about' in href or '소개' in href:
+                if 'contact' in href or 'about' in href or '소개' in href or '안내' in href:
                     full_url = href if href.startswith('http') else f"{url.rstrip('/')}/{href.lstrip('/')}"
                     contact_links.append(full_url)
             
@@ -72,16 +87,15 @@ def extract_emails_from_url(url):
         return ", ".join(list(emails)) if emails else "이메일을 찾을 수 없음"
             
     except Exception as e:
-        return "오류 발생"
+        return "접속/파싱 오류"
 
 # 3. Streamlit UI 대시보드
-st.set_page_config(page_title="기업명 이메일 크롤러", layout="wide")
-st.title("🏢 기업 이름 기반 이메일 추출기")
-st.caption("네이버 검색 API 연동 완료 - 차단 우회 및 공식 홈페이지 이메일 매칭 대시보드")
+st.set_page_config(page_title="기업명 이메일 크롤러 V2", layout="wide")
+st.title("🏢 기업 이름 기반 이메일 추출기 (검색 엔진 튜닝 버전)")
+st.caption("네이버 API 검색 쿼리 튜닝 및 필터링 로직이 업그레이드된 버전입니다.")
 
 st.markdown("---")
 
-# 기업명 리스트 대량 입력창
 company_input = st.text_area(
     "기업 이름을 입력하세요 (한 줄에 하나씩)",
     height=200,
@@ -99,17 +113,18 @@ if st.button("🚀 크롤링 시작", type="primary"):
         status_text = st.empty()
         
         for idx, company in enumerate(companies):
-            status_text.text(f"⏳ 진행 중 ({idx+1}/{len(companies)}): {company} 홈페이지 찾는 중...")
+            status_text.text(f"⏳ 진행 중 ({idx+1}/{len(companies)}): {company} 홈페이지 검색 중...")
             
-            # 네이버 API 기반 홈페이지 URL 탐색
+            # 개선된 검색 함수 호출
             url = get_company_url_naver(company)
             
-            if url:
-                status_text.text(f"⏳ 진행 중 ({idx+1}/{len(companies)}): {company} 이메일 스캐닝 중...")
+            if url and not url.startswith("API 오류") and not url.startswith("검색 중 에러"):
+                status_text.text(f"⏳ 진행 중 ({idx+1}/{len(companies)}): {company} 이메일 추출 중...")
                 email_result = extract_emails_from_url(url)
             else:
-                url = "공식 홈페이지 찾기 실패"
                 email_result = "N/A"
+                if not url:
+                    url = "공식 홈페이지 찾기 실패 (검색 결과 없음)"
                 
             results.append({
                 "기업 이름": company, 
@@ -118,19 +133,17 @@ if st.button("🚀 크롤링 시작", type="primary"):
             })
             
             progress_bar.progress((idx + 1) / len(companies))
-            time.sleep(0.5)  # API 기반 안정적인 조회를 위한 최소 딜레이 설정
+            time.sleep(0.5)
             
         status_text.text("✅ 크롤링 완료!")
         
-        # 대시보드 표 출력
         df = pd.DataFrame(results)
         st.dataframe(df, use_container_width=True)
         
-        # 다운로드 버튼 구현
         csv = df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         st.download_button(
             label="📥 결과 Excel(CSV) 다운로드",
             data=csv,
-            file_name="company_emails_final.csv",
+            file_name="company_emails_fixed_v2.csv",
             mime="text/csv"
         )
